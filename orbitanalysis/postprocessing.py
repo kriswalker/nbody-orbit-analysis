@@ -1,3 +1,4 @@
+import glob
 import numpy as np
 import h5py
 import time
@@ -29,7 +30,8 @@ class Apsides:
 
     def collate_apsides(self, halo_ids=None, snapshot_number=None,
                         angle_cut=np.pi/4, save_final_counts=False,
-                        data_type=None, savefile=None, verbose=True):
+                        data_type=None, savefile=None, separate_files=False,
+                        verbose=True):
 
         """
         Collate the peri/apocenter information to obtain the complete set of
@@ -143,29 +145,55 @@ class Apsides:
 
             final_halo_ids = halo_ids_final[hinds1] if s != \
                 self.snapshot_numbers[-1] else None
-            with h5py.File(savefile, 'a') as hf:
 
-                hfs = hf.create_group('snapshot_{}'.format('%03d' % s))
-                hfs.create_dataset('particle_IDs', data=orbiting_ids_unique)
-                hfs.create_dataset(
-                    '{}er_counts'.format(self.mode[:-3]), data=counts)
-                hfs.create_dataset('halo_offsets', data=offsets)
-                if final_halo_ids is not None:
+            if separate_files:
+
+                with h5py.File(savefile.format('%03d' % s), 'w') as hf:
+
+                    hf.create_dataset('particle_IDs', data=orbiting_ids_unique)
+                    hf.create_dataset(
+                        '{}er_counts'.format(self.mode[:-3]), data=counts)
+                    hf.create_dataset('halo_offsets', data=offsets)
+                    if final_halo_ids is not None:
+                        hf.create_dataset(
+                            'final_descendant_IDs', data=final_halo_ids)
+                    hf.create_dataset(
+                        'halo_IDs', data=halo_ids_current[hinds1])
+                    hf.create_dataset(
+                        'halo_positions', data=region_positions[hinds1])
+                    hf.create_dataset(
+                        'halo_velocities', data=bulk_velocities[hinds1])
+                    hf.create_dataset(
+                        'region_radii', data=region_radii[hinds1])
+
+            else:
+
+                with h5py.File(savefile, 'a') as hf:
+
+                    hfs = hf.create_group('snapshot_{}'.format('%03d' % s))
                     hfs.create_dataset(
-                        'final_descendant_IDs', data=final_halo_ids)
-                hfs.create_dataset('halo_IDs', data=halo_ids_current[hinds1])
-                hfs.create_dataset(
-                    'halo_positions', data=region_positions[hinds1])
-                hfs.create_dataset(
-                    'halo_velocities', data=bulk_velocities[hinds1])
-                hfs.create_dataset(
-                    'region_radii', data=region_radii[hinds1])
+                        'particle_IDs', data=orbiting_ids_unique)
+                    hfs.create_dataset(
+                        '{}er_counts'.format(self.mode[:-3]), data=counts)
+                    hfs.create_dataset('halo_offsets', data=offsets)
+                    if final_halo_ids is not None:
+                        hfs.create_dataset(
+                            'final_descendant_IDs', data=final_halo_ids)
+                    hfs.create_dataset(
+                        'halo_IDs', data=halo_ids_current[hinds1])
+                    hfs.create_dataset(
+                        'halo_positions', data=region_positions[hinds1])
+                    hfs.create_dataset(
+                        'halo_velocities', data=bulk_velocities[hinds1])
+                    hfs.create_dataset(
+                        'region_radii', data=region_radii[hinds1])
 
             if verbose:
                 print('Snapshot {} collated'.format('%03d' % s))
 
         if save_final_counts:
-            self.save_final_apsis_counts(savefile, verbose=verbose)
+            self.save_final_apsis_counts(
+                savefile, separate_files=separate_files, verbose=verbose)
 
         if verbose:
             print('{}ers collated in {} s'.format(
@@ -173,8 +201,8 @@ class Apsides:
 
         return
 
-    def save_final_apsis_counts(self, collated_file, snapshot_numbers=None,
-                                verbose=True):
+    def save_final_apsis_counts(self, collated_file, separate_files=False,
+                                snapshot_numbers=None, verbose=True):
 
         """
         Save the orbit counts that the particles at each snapshot will have by
@@ -192,49 +220,88 @@ class Apsides:
 
         """
 
-        with h5py.File(collated_file, 'r+') as hf:
+        def read_final(hf):
 
-            skeys = np.array(list(hf.keys()))
+            ids = hf['particle_IDs'][:]
+            counts = hf['{}er_counts'.format(self.mode[:-3])][:]
+            halo_ids = hf['halo_IDs'][:]
+            offsets = list(hf['halo_offsets'][:]) + [len(ids)]
+            slices = list(zip(offsets[:-1], offsets[1:]))
 
-            ids_final = hf[skeys[-1]]['particle_IDs'][:]
-            counts_final = hf[skeys[-1]][
-                '{}er_counts'.format(self.mode[:-3])][:]
-            halo_ids = hf[skeys[-1]]['halo_IDs'][:]
-            offsets_final = list(
-                hf[skeys[-1]]['halo_offsets'][:]) + [len(ids_final)]
-            slices_final = list(zip(offsets_final[:-1], offsets_final[1:]))
+            return ids, counts, halo_ids, slices
+    
+        def read_and_save(hf, halo_ids, ids_final, counts_final, slices_final):
 
+            ids = hf['particle_IDs'][:]
+            desc_ids = hf['final_descendant_IDs'][:]
+            offsets = list(hf['halo_offsets'][:]) + [len(ids)]
+            slices = list(zip(offsets[:-1], offsets[1:]))
+
+            hinds = myin1d(halo_ids, desc_ids)
+
+            counts_retro = np.empty(len(ids))
+            for hind2, hind1 in enumerate(hinds):
+
+                final_inds = myin1d(
+                    ids_final[slice(*slices_final[hind1])],
+                    ids[slice(*slices[hind2])])
+                
+                counts_retro[slice(*slices[hind2])] = counts_final[
+                    slice(*slices_final[hind1])][final_inds]
+
+            hf.create_dataset('{}er_counts_final'.format(
+                self.mode[:-3]), data=counts_retro)
+
+        if separate_files:
+
+            fname_ = collated_file.split('{}')
+            fnames = np.sort(glob.glob(fname_[0]+'*'+fname_[1]))
+            snap_nums = np.array([int(fname[
+                len(fname_[0]):-len(fname_[1])]) for fname in fnames])
+            
+            with h5py.File(
+                    collated_file.format('%03d' % snap_nums[-1]), 'r') as hf:
+                
+                ids_final, counts_final, halo_ids, slices_final = read_final(
+                    hf)
+            
             if snapshot_numbers is None:
-                skeys_ = skeys[:-1]
-            else:
-                snap_nums = np.array(
-                    [int(skey.split('_')[-1]) for skey in skeys])
-                skeys_ = skeys[
-                    np.where(np.in1d(snap_nums, snapshot_numbers))[0]]
+                snapshot_numbers = snap_nums[:-1]
+            
+            for s in snapshot_numbers:
 
-            for skey in skeys_:
+                with h5py.File(collated_file.format('%03d' % s), 'r+') as hf:
 
-                ids = hf[skey]['particle_IDs'][:]
-                desc_ids = hf[skey]['final_descendant_IDs'][:]
-                offsets = list(hf[skey]['halo_offsets'][:]) + [len(ids)]
-                slices = list(zip(offsets[:-1], offsets[1:]))
-
-                hinds = myin1d(halo_ids, desc_ids)
-
-                counts_retro = np.empty(len(ids))
-                for hind2, hind1 in enumerate(hinds):
-                    
-                    final_inds = myin1d(
-                        ids_final[slice(*slices_final[hind1])],
-                        ids[slice(*slices[hind2])])
-                    
-                    counts_retro[slice(*slices[hind2])] = counts_final[
-                        slice(*slices_final[hind1])][final_inds]
-
-                hf[skey].create_dataset(
-                    '{}er_counts_final'.format(self.mode[:-3]),
-                    data=counts_retro)
-
+                    read_and_save(
+                        hf, halo_ids, ids_final, counts_final, slices_final)
+                
                 if verbose:
-                    print('Final counts saved for {} {}'.format(
-                        *(skey.split('_'))))
+                    print('Final counts saved for snapshot {}'.format(
+                        '%03d' % s))
+
+        else:
+
+            with h5py.File(collated_file, 'r+') as hf:
+
+                skeys = np.array(list(hf.keys()))
+
+                ids_final, counts_final, halo_ids, slices_final = read_final(
+                        hf[skeys[-1]])
+
+                if snapshot_numbers is None:
+                    skeys_ = skeys[:-1]
+                else:
+                    snap_nums = np.array(
+                        [int(skey.split('_')[-1]) for skey in skeys])
+                    skeys_ = skeys[
+                        np.where(np.in1d(snap_nums, snapshot_numbers))[0]]
+
+                for skey in skeys_:
+
+                    read_and_save(
+                            hf[skey], halo_ids, ids_final, counts_final,
+                            slices_final)
+
+                    if verbose:
+                        print('Final counts saved for {} {}'.format(
+                            *(skey.split('_'))))
