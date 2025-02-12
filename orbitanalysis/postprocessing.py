@@ -239,7 +239,7 @@ class Apsides:
 
             hinds = myin1d(halo_ids, desc_ids)
 
-            counts_retro = np.empty(len(ids))
+            counts_retro = np.empty(len(ids), dtype=counts_final.dtype)
             for hind2, hind1 in enumerate(hinds):
 
                 final_inds = myin1d(
