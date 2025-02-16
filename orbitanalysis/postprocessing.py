@@ -140,7 +140,7 @@ class Apsides:
                 if i in hinds2:
                     lens.append(len(oids_u))
             orbiting_ids_unique = np.concatenate(orbiting_ids_unique)
-            counts = np.concatenate(counts)
+            counts = np.concatenate(counts).astype(np.uint16)
             offsets = np.cumsum([0]+lens)[:-1]
 
             final_halo_ids = halo_ids_final[hinds1] if s != \
