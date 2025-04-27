@@ -137,7 +137,7 @@ def track_orbits(snapshot_numbers, main_branches, regions, load_snapshot_data,
             snapshot['redshift'], snapshot['H0'], snapshot['Omega_m'],
             snapshot['Omega_L'], snapshot['Omega_k'])
 
-        if i == 0 and not resume:
+        if i == istart and not resume:
             if 'box_size' in snapshot:
                 box_size = snapshot['box_size']
             else:
